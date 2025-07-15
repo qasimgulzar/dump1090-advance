@@ -8,6 +8,9 @@
 #include <math.h>
 #include <signal.h>
 #include <float.h>
+#include <MQTTClient.h>
+#include "types.h"
+#include "mqtt0client.h"
 
 #define CTRL_OUT		(LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_OUT)
 #define CTRL_TIMEOUT	300
@@ -24,6 +27,8 @@
 #define MODES_SHORT_MSG_BITS 56
 #define MODES_FULL_LEN (8+112)
 
+
+MQTTClient client;
 
 // Convert a hex string (e.g., "8D4840D6202CC371C32CE0576098") to a bits array (MSB first)
 void hex_string_to_bits(const char *hex, int *bits, int num_bits) {
@@ -111,15 +116,6 @@ void sigint_handler(int signum) {
     do_exit = 1;
 }
 
-void hex_to_str(const char *hex_str, char *out_str) {
-    size_t len = strlen(hex_str);
-    for (size_t i = 0; i < len; i += 2) {
-        char byte[3] = {hex_str[i], hex_str[i + 1], 0};
-        out_str[i / 2] = (char) strtol(byte, NULL, 16);
-    }
-    out_str[len / 2] = '\0';
-}
-
 int number_of_buffers() {
     FILE *f = fopen("/Users/qasim/CLionProjects/output.bin", "rb");
     if (!f) return 0;
@@ -139,26 +135,6 @@ void record_buff(unsigned char *buf, uint32_t len) {
     } else {
         printf("Failed to open file for writing\n");
     }
-}
-
-static inline int slice_phase0(uint16_t *m) {
-    return 5 * m[0] - 3 * m[1] - 2 * m[2];
-}
-
-static inline int slice_phase1(uint16_t *m) {
-    return 4 * m[0] - m[1] - 3 * m[2];
-}
-
-static inline int slice_phase2(uint16_t *m) {
-    return 3 * m[0] + m[1] - 4 * m[2];
-}
-
-static inline int slice_phase3(uint16_t *m) {
-    return 2 * m[0] + 3 * m[1] - 5 * m[2];
-}
-
-static inline int slice_phase4(uint16_t *m) {
-    return m[0] + 5 * m[1] - 5 * m[2] - m[3];
 }
 
 unsigned char *read_buffer(int n) {
@@ -253,121 +229,6 @@ void moving_average_filter(const float *input, float *output, size_t len, int wi
             }
         }
         output[i] = sum / count;
-    }
-}
-
-void find_preambles(const unsigned char buf[], size_t len) {
-    size_t num_samples = len / 2;
-    float mag[num_samples];
-    float *msg;
-    float max_amplitude = 0.0f;
-    // Convert IQ to magnitude
-    for (size_t i = 0; i < num_samples; i++) {
-        mag[i] = to_amplitude(buf, i);
-        // mag[i] = mag[i] < 110 ? 0 : 1; // Normalize to 0 or 1
-        if (max_amplitude < mag[i]) {
-            max_amplitude = mag[i];
-        }
-    }
-    // float filtered_mag[num_samples];
-    // moving_average_filter(mag, filtered_mag, num_samples, 5); // window size 5
-    float max_mag = 0.0f;
-    for (int i = 0; i < num_samples; i++) {
-        // Normalize magnitude to 0 or 1
-        mag[i] /= max_amplitude;
-        max_mag = fmaxf(max_mag, mag[i]);
-    }
-
-    // Set threshold at 50% of max magnitude
-    // Scan for preamble
-    // plot_signal(mag, 112+PREAMBLE_LEN);
-    for (size_t i = 0; i < num_samples - PREAMBLE_LEN - MSG_BITS; i++) {
-        // float preamble_threshold=0;
-
-        if (is_preamble(mag, i, (max_mag * .5f) * 100)) {
-            float bits[8] = {0};
-            for (int j = i, ii = 0; ii < PREAMBLE_LEN; j++, ii++) {
-                // Normalize to 0 or 1
-                // preamble_threshold = preamble_threshold < mag[j] ? mag[j] : preamble_threshold;
-                bits[ii] = valid_bit(mag[j], (max_mag * .5f) * 100);
-            }
-            printf("Preamble found at sample %zu\n", i);
-            msg = (mag + i) + PREAMBLE_LEN;
-            float const noise = (*(mag + i + 1) + *(mag + i + 3) + *(mag + i + 4)) / 3;
-            // msg = mag + i;
-            // plot_signal(bits, 8);
-            float max_sig_amp = 0.0f;
-            for (int j = 0; j < MSG_BITS; j++) {
-                // Normalize to 0 or 1
-                max_sig_amp = msg[j] > max_sig_amp ? msg[j] : max_sig_amp;
-            }
-            // const float threshold = (max_sig_amp * .5f) * 100;
-            const float threshold = ((max_mag) * .50f) * 100;
-
-
-            // for (int j = 0; j < MSG_BITS; j++) {
-            //     if (!valid_bit(msg[j])) {
-            //         printf("Invalid bit at position %d: %f\n", j, msg[j]);
-            //         goto SKIP_PREAMBLE;
-            //     }
-            // }
-
-            // msg: pointer to 112 bits (each 0 or 1)
-            // uint8_t bytes[14] = {0};
-            // for (int b = 0; b < 112; b++) {
-            //     if ((msg[b] * 100) > 60 ? 1 : 0) {
-            //         bytes[b / 8] |= (1 << (7 - (b % 8)));
-            //     }
-            // }
-            // printf("Message: ");
-            // for (int i = 0; i < 14; i++) {
-            //     printf("%02X", bytes[i]);
-            // }
-            printf("\n");
-            unsigned int df = 0;
-            for (int b = 0; b < 5; b++) {
-                int bit = valid_bit(msg[b], threshold);
-                if ((msg[0] > msg[1] && msg[0] > msg[2] && msg[0] > msg[3]) && (
-                        msg[4] > msg[1] && msg[4] > msg[2] && msg[4] > msg[3]))
-                    printf("%f,", msg[b]);
-                // printf("%d,",bit);
-
-
-                // df = (df << 1) | ((f) > 30 ? 1 : 0); // Convert to 0 or 1
-                df = (df << 1) | bit; // Convert to 0 or 1
-            }
-
-            // unsigned int type_code = 0;
-            // for (int b = 32; b < 37; b++) {
-            //     type_code = (type_code << 1) | (msg[b] * 100) > 30 ? 1 : 0; // Convert to 0 or 1
-            // }
-            if (df == 17) {
-                // printf("Type Code (5 bits): %d\n", type_code);
-
-                printf("\nDF (5 bits): %d\n", df);
-                unsigned int tc = 0;
-                for (int b = 32; b < 37; b++) {
-                    tc = (tc << 1) | valid_bit(msg[b], threshold); // Convert to 0 or 1
-                }
-                printf("TC (4 bits): %d\n", tc);
-                unsigned int ca = 0;
-                for (int b = 5; b < 8; b++) {
-                    ca = (ca << 1) | valid_bit(msg[b], threshold); // Convert to 0 or 1
-                }
-                printf("CA (3 bits): %d\n", ca);
-                uint32_t icao = 0;
-                // ICAO is 24 bits, bits 8 to 31
-                // float icao_max=0;
-                // for (int b = 8; b < 32; b++) {
-                //     icao_max = msg[b] > icao_max ? msg[b] : icao_max;
-                // }
-                // (max_mag * .5f) * 100
-                for (int b = 8; b < 32; b++) {
-                    icao = (icao << 1) | valid_bit(msg[b], threshold); // Convert to 0 or 1
-                }
-                printf("ICAO (24 bits): %06X\n", icao & 0xFFFFFF);
-            }
-        }
     }
 }
 
@@ -582,11 +443,33 @@ char *decodeFlightNumber(unsigned char *bits) {
     uint32_t C8 = decode_block(70, 76, bits);
 
     char map[] = "#ABCDEFGHIJKLMNOPQRSTUVWXYZ#####_###############0123456789######";
-    unsigned char flight[10] = {NULL};
+    unsigned char *flight = malloc(9 * sizeof(char));
     printf("%c%c%c-%c%c%c%c%c\n", map[C1], map[C2], map[C3], map[C4], map[C5], map[C6], map[C7], map[C8]);
-    sprintf(flight, "%c%c%c%c%c%c%c%c",
+    sprintf(flight, "%c%c%c%c%c%c%c%c\0",
             map[C1], map[C2], map[C3], map[C4], map[C5], map[C6], map[C7], map[C8]);
     return flight;
+}
+
+
+char *bits_to_hex_string(const unsigned char *bits, int num_bits) {
+    int num_bytes = (num_bits + 7) / 8;
+    unsigned char *bytes = malloc(num_bytes);
+    memset(bytes, 0, num_bytes);
+
+    for (int i = 0; i < num_bits; i++) {
+        if (bits[i]) {
+            bytes[i / 8] |= (1 << (7 - (i % 8)));
+        }
+    }
+
+    char *hex_str = malloc(num_bytes * 2 + 1);
+    for (int i = 0; i < num_bytes; i++) {
+        sprintf(hex_str + i * 2, "%02X", bytes[i]);
+    }
+    hex_str[num_bytes * 2] = '\0';
+
+    free(bytes);
+    return hex_str;
 }
 
 void async_callback(unsigned char *buf, unsigned int len, void *ctx) {
@@ -598,9 +481,6 @@ void async_callback(unsigned char *buf, unsigned int len, void *ctx) {
     for (int i = 0; i < magnitudelength; i++) {
     skip_preamble:
         if (isItPreamble(magnitude + i, threshold)) {
-            // printf("Preamble found at sample %d\n", i);
-            // plot_signal_runtime(magnitude + i, PREAMBLE_LEN+112);
-            // sleep(0.5);
             threshold = otsu_threshold(magnitude + 1, PREAMBLE_LEN + 112);
 
             double *message = magnitude + i + PREAMBLE_LEN;
@@ -622,6 +502,18 @@ void async_callback(unsigned char *buf, unsigned int len, void *ctx) {
                 continue;
             }
 
+
+            RawMessage *rawMsg = (RawMessage *) malloc(sizeof(RawMessage));
+            rawMsg->msg = malloc(28 * sizeof(char));
+            strcpy(rawMsg->msg, bits_to_hex_string(bits,112));
+            printf("Raw Message: %s\n", rawMsg->msg);
+
+            char *jsonStr = toRawMessageStr(*rawMsg);
+            mqttPublish(client, jsonStr);
+
+            free(jsonStr);
+            free(rawMsg);
+
             if (df == 17) {
                 printf("\nDF (5 bits): %d\n", df);
                 unsigned int ca = decode_block(5, 8, bits);
@@ -634,9 +526,38 @@ void async_callback(unsigned char *buf, unsigned int len, void *ctx) {
                 printf("CA (3 bits): %d\n", ca);
 
 
-                if (type_code >= 1 && type_code <= 4) {
-                    uint32_t EC = decode_block(37, 40, bits);
-                    printf("%s\n", decodeFlightNumber(bits));
+                switch (type_code) {
+                    case 4: {
+                        uint32_t EC = decode_block(37, 40, bits);
+                        printf("%s\n", decodeFlightNumber(bits));
+                        break;
+                    }
+                    case 19: {
+                        uint32_t subType = decode_block(37, 40, bits);
+
+                        if (subType == 1) {
+                            uint32_t IntentChangeFlag = decode_block(40, 41, bits);
+                            uint32_t eastWestVelocitySign = decode_block(45, 46, bits);
+                            uint32_t eastWestVelocity = decode_block(46, 56, bits);
+                            uint32_t northWestVelocitySign = decode_block(56, 57, bits);
+                            uint32_t northWestVelocity = decode_block(57, 67, bits);
+
+                            int ew_vel = eastWestVelocitySign ? -eastWestVelocity : eastWestVelocity;
+                            int nw_vel = northWestVelocitySign ? -northWestVelocity : northWestVelocity;
+                            double ground_speed = sqrt(ew_vel * ew_vel + nw_vel * nw_vel);
+                            printf("Ground Speed: %.2f knots\n", ground_speed);
+                        }
+                        break;
+                    }
+                    case 11: {
+                        uint32_t time = decode_block(52, 53, bits);
+                        uint32_t CPR = decode_block(53, 54, bits);
+                        uint32_t surveillanceType = decode_block(37, 39, bits);
+                        uint32_t latCpr = decode_block(54, 71, bits);
+                        uint32_t longCpr = decode_block(71, 88, bits);
+
+                        break;
+                    }
                 }
             }
         }
@@ -682,29 +603,8 @@ int main() {
     }
 
     rtlsdr_close(dev);
-
-
-    // long buffers = number_of_buffers();
-    //
-    // for (int i = 0; i < buffers; i++) {
-    //     unsigned char *buf = malloc(MODES_RTL_BUF_SIZE);
-    //     if (!buf) {
-    //         printf("Failed to allocate buffer\n");
-    //         return 1;
-    //     }
-    //
-    //     unsigned char *signel = read_buffer(i);
-    //
-    //     async_callback(signel,MODES_RTL_BUF_SIZE,NULL);
-    //
-    //     // plot_signal(signel,MODES_RTL_BUF_SIZE);
-    //     // getchar();
-    //     // find_preambles(signel,MODES_RTL_BUF_SIZE);
-    //
-    //     free(buf);
-    // }
-    //
-    // printf("Number of buffers: %ld\n", buffers);
+    MQTTClient_disconnect(client,TIMEOUT);
+    MQTTClient_destroy(client);
 
     return 0;
 }

@@ -11,6 +11,7 @@
 #include <MQTTClient.h>
 #include "types.h"
 #include "mqtt0client.h"
+#include "lib/uthash.h"
 
 #define CTRL_OUT		(LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_OUT)
 #define CTRL_TIMEOUT	300
@@ -29,6 +30,7 @@
 
 
 MQTTClient client;
+LatLongPacket *locations = NULL;
 
 // Convert a hex string (e.g., "8D4840D6202CC371C32CE0576098") to a bits array (MSB first)
 void hex_string_to_bits(const char *hex, int *bits, int num_bits) {
@@ -447,6 +449,14 @@ void async_callback(unsigned char *buf, unsigned int len, void *ctx) {
                         uint32_t surveillanceType = decode_block(37, 39, bits);
                         uint32_t latCpr = decode_block(54, 71, bits);
                         uint32_t longCpr = decode_block(71, 88, bits);
+                        LatLongPacket latLongPacket = {
+                            .time = time,
+                            .CPR = CPR,
+                            .surveillanceType = surveillanceType,
+                            .latCpr = latCpr,
+                            .longCpr = longCpr
+                        };
+
 
                         break;
                     }
@@ -455,7 +465,6 @@ void async_callback(unsigned char *buf, unsigned int len, void *ctx) {
             free(rawMsg);
         }
     }
-    // close_gnuplot();
 }
 
 

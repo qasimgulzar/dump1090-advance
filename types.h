@@ -10,6 +10,14 @@ typedef struct {
     double speed;
 } RawMessage;
 
+typedef struct {
+    uint32_t time;
+    uint32_t CPR;
+    uint32_t surveillanceType;
+    uint32_t latCpr;
+    uint32_t longCpr;
+} LatLongPacket;
+
 
 char *toRawMessageStr(RawMessage rawMsg) {
     cJSON *json_obj = cJSON_CreateObject();

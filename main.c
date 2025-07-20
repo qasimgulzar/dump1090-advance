@@ -116,91 +116,6 @@ void sigint_handler(int signum) {
     do_exit = 1;
 }
 
-int number_of_buffers() {
-    FILE *f = fopen("/Users/qasim/CLionProjects/output.bin", "rb");
-    if (!f) return 0;
-    fseek(f, 0, SEEK_END);
-    long filesize = ftell(f);
-    fclose(f);
-    return filesize / MODES_RTL_BUF_SIZE;
-}
-
-void record_buff(unsigned char *buf, uint32_t len) {
-    FILE *f = fopen("signal_dump.bin", "ab");
-    if (f) {
-        fwrite(buf, 1, len, f);
-        fclose(f);
-        printf("Appended %u bytes to signal_dump.bin\n", len);
-        sleep(1);
-    } else {
-        printf("Failed to open file for writing\n");
-    }
-}
-
-unsigned char *read_buffer(int n) {
-    FILE *f = fopen("/Users/qasim/CLionProjects/output.bin", "rb");
-    if (!f) {
-        printf("Failed to open file for reading\n");
-        return NULL;
-    }
-    fseek(f, n * MODES_RTL_BUF_SIZE, SEEK_SET);
-    unsigned char buf[MODES_RTL_BUF_SIZE];
-    if (!buf) {
-        fclose(f);
-        printf("Failed to allocate buffer\n");
-        return NULL;
-    }
-    size_t bytes_read = fread(buf, 1, MODES_RTL_BUF_SIZE, f);
-    if (bytes_read < MODES_RTL_BUF_SIZE) {
-        printf("Warning: Read only %zu bytes from buffer %d\n", bytes_read, n);
-    } else {
-        printf("Read %zu bytes from buffer %d\n", bytes_read, n);
-    }
-    fclose(f);
-    return buf;
-}
-
-void plot_signal(const float *buf, size_t len) {
-    FILE *gp = popen("gnuplot -persistent", "w");
-    if (!gp) {
-        printf("Failed to open gnuplot\n");
-        return;
-    }
-    fprintf(gp, "set title 'Signal Magnitude'\n");
-    fprintf(gp, "plot '-' with lines title 'Magnitude'\n");
-
-    size_t num_samples = len / 2;
-    for (size_t i = 0; i < len; i++) {
-        // int I = ((int) buf[2 * i]) - 127;
-        // int Q = ((int) buf[2 * i + 1]) - 127;
-        // double mag = sqrt(I * I + Q * Q);
-        fprintf(gp, "%zu %f\n", i, buf[i]);
-    }
-    fprintf(gp, "e\n");
-    fflush(gp);
-    getchar();
-    fprintf(gp, "exit\n");
-    pclose(gp);
-}
-
-int is_preamble(const float *mag, int i, float t) {
-    // Preamble pattern: high at 0,2,7,9; low at 1,3,4,5,6,8
-    if (((mag[i + 0] * 100) > t ? 1 : 0) != 1) return 0;
-    if (((mag[i + 2] * 100) > t ? 1 : 0) != 1) return 0;
-    if (((mag[i + 7] * 100) > t ? 1 : 0) != 1) return 0;
-    // if (((mag[i + 9] * 100) > t ? 1 : 0) != 1) return 0;
-    // Quiet spots if (((mag[i + 1] * 100) > 30) != 0) return 0;
-    if (((mag[i + 1] * 100) > t) != 0) return 0;
-    if (((mag[i + 3] * 100) > t) != 0) return 0;
-    if (((mag[i + 4] * 100) > t) != 0) return 0;
-    if (((mag[i + 5] * 100) > t) != 0) return 0;
-    if (((mag[i + 6] * 100) > t) != 0) return 0;
-
-    // if ((mag[i + 0] + mag[i + 2] + mag[i + 7] * 2) < 3 * (mag[i + 4] + mag[i + 6] + mag[i + 5])) // about 3.5dB SNR
-    //     return 0;
-    return 1;
-}
-
 float to_amplitude(const unsigned char buf[], int bit_index) {
     // Each bit is 2 samples (4 bytes: I0,Q0,I1,Q1)
     float I = (buf[2 * bit_index] - 127.4) / 128;
@@ -354,38 +269,6 @@ int isItPreamble(double *mag, double threshold) {
     return 1;
 }
 
-FILE *gp = NULL;
-
-void open_gnuplot() {
-    if (!gp) {
-        gp = popen("gnuplot -persistent", "w");
-        fprintf(gp, "set title 'Signal Magnitude'\n");
-        fprintf(gp, "plot '-' with lines title 'Magnitude'\n");
-        fflush(gp);
-    }
-}
-
-void plot_signal_runtime(const double *buf, size_t len) {
-    if (!gp) open_gnuplot();
-    fprintf(gp, "set title 'Signal Magnitude'\n");
-    fprintf(gp, "plot '-' with lines title 'Magnitude'\n");
-    for (size_t i = 0; i < len; i++) {
-        fprintf(gp, "%zu %f\n", i, buf[i]);
-    }
-    fprintf(gp, "e\n");
-    fflush(gp);
-    // No getchar() here; call as needed in your loop
-}
-
-
-void close_gnuplot() {
-    if (gp) {
-        fprintf(gp, "exit\n");
-        pclose(gp);
-        gp = NULL;
-    }
-}
-
 // Mode S generator polynomial (24 bits)
 #define MODES_POLY 0xFFF409U
 
@@ -502,9 +385,12 @@ void async_callback(unsigned char *buf, unsigned int len, void *ctx) {
                 continue;
             }
 
-
+            uint32_t icao = decode_block(8, 32, bits);
             RawMessage *rawMsg = (RawMessage *) malloc(sizeof(RawMessage));
             rawMsg->msg = malloc(28 * sizeof(char));
+            rawMsg->icao = malloc(8 * sizeof(char));
+            rawMsg->speed = 0;
+            sprintf(rawMsg->icao, "%06X", icao & 0xFFFFFF);
             strcpy(rawMsg->msg, bits_to_hex_string(bits,112));
             printf("Raw Message: %s\n", rawMsg->msg);
 
@@ -512,13 +398,11 @@ void async_callback(unsigned char *buf, unsigned int len, void *ctx) {
             mqttPublish(client, jsonStr);
 
             free(jsonStr);
-            free(rawMsg);
 
             if (df == 17) {
                 printf("\nDF (5 bits): %d\n", df);
                 unsigned int ca = decode_block(5, 8, bits);
                 unsigned int type_code = decode_block(32, 37, bits);
-                uint32_t icao = decode_block(8, 32, bits);
 
                 printf("ICAO (24 bits): %06X\n", icao & 0xFFFFFF);
                 printf("PARITY (24 bits): %06X\n", parity & 0xFFFFFF);
@@ -529,7 +413,11 @@ void async_callback(unsigned char *buf, unsigned int len, void *ctx) {
                 switch (type_code) {
                     case 4: {
                         uint32_t EC = decode_block(37, 40, bits);
-                        printf("%s\n", decodeFlightNumber(bits));
+                        rawMsg->callSign = decodeFlightNumber(bits);
+                        printf("%s\n", rawMsg->callSign);
+                        char *jsonStr = toRawMessageStr(*rawMsg);
+                        mqttPublish(client, jsonStr);
+                        free(jsonStr);
                         break;
                     }
                     case 19: {
@@ -546,6 +434,10 @@ void async_callback(unsigned char *buf, unsigned int len, void *ctx) {
                             int nw_vel = northWestVelocitySign ? -northWestVelocity : northWestVelocity;
                             double ground_speed = sqrt(ew_vel * ew_vel + nw_vel * nw_vel);
                             printf("Ground Speed: %.2f knots\n", ground_speed);
+                            rawMsg->speed = ground_speed;
+                            char *jsonStr = toRawMessageStr(*rawMsg);
+                            mqttPublish(client, jsonStr);
+                            free(jsonStr);
                         }
                         break;
                     }
@@ -560,6 +452,7 @@ void async_callback(unsigned char *buf, unsigned int len, void *ctx) {
                     }
                 }
             }
+            free(rawMsg);
         }
     }
     // close_gnuplot();
@@ -567,6 +460,13 @@ void async_callback(unsigned char *buf, unsigned int len, void *ctx) {
 
 
 int main() {
+    MQTTClient_create(&client, ADDRESS, CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
+    MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+    int rc = MQTTClient_connect(client, &conn_opts);
+    if (rc != MQTTCLIENT_SUCCESS) {
+        printf("Failed to connect, return code %d\n", rc);
+        // Handle error, do not proceed
+    }
     rtlsdr_dev_t *dev = NULL;
     int device_index = 0; // Use 0 for the first RTL device
 

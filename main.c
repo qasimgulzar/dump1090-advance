@@ -9,8 +9,8 @@
 #include <signal.h>
 #include <float.h>
 #include <MQTTClient.h>
-#include "types.h"
-#include "mqtt0client.h"
+#include "lib/types.h"
+#include "lib/mqtt0client.h"
 #include "lib/uthash.h"
 
 #define CTRL_OUT		(LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_OUT)

@@ -17,5 +17,5 @@ link_directories(/opt/homebrew/Cellar/libpaho-mqtt/1.3.14/lib/)
 
 add_executable(custom_sdr main.c
         serializers.h
-        types.h)
+        lib/types.h)
 target_link_libraries(custom_sdr ${LIBUSB_LIBRARIES} rtlsdr paho-mqtt3c cjson)

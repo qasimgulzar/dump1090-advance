@@ -44,4 +44,4 @@ Run the compiled binary (e.g., `custom_sdr`) to start decoding and publishing AD
 - [Eclipse Paho MQTT C Client](https://www.eclipse.org/paho/)
 
 ## License
-Specify your license here.
+MIT License

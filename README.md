@@ -40,9 +40,8 @@ Run the compiled binary (e.g., `custom_sdr`) to start decoding and publishing AD
 - `CMakeLists.txt` - Build configuration
 
 ## References
-- [ADS-B Decoding Guide](ADS-B%20Decoding%20Guide.pdf)
+- [ADS-B Decoding Guide](docs/ADS-B%20Decoding%20Guide.pdf) - Learn about ADS-B decoding concepts and message formats
 - [Eclipse Paho MQTT C Client](https://www.eclipse.org/paho/)
 
 ## License
 Specify your license here.
-

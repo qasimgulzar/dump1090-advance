@@ -15,7 +15,5 @@ link_directories(/opt/homebrew/Cellar/cjson/1.7.18/lib)
 link_directories(/opt/homebrew/Cellar/librtlsdr/2.0.2/lib)
 link_directories(/opt/homebrew/Cellar/libpaho-mqtt/1.3.14/lib/)
 
-add_executable(custom_sdr main.c
-        serializers.h
-        lib/types.h)
+add_executable(custom_sdr main.c lib/types.h)
 target_link_libraries(custom_sdr ${LIBUSB_LIBRARIES} rtlsdr paho-mqtt3c cjson)
